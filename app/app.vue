@@ -29,6 +29,12 @@ useSeoMeta({
   twitterImage: 'https://ui.nuxt.com/assets/templates/nuxt/dashboard-light.png',
   twitterCard: 'summary_large_image'
 })
+
+const { fetchUser } = useAuth()
+
+onMounted(async () => {
+  await fetchUser()
+})
 </script>
 
 <template>

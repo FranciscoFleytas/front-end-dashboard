@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1600" height="800" viewBox="0 0 1600 800" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#7C3AED" stop-opacity="0.14"/>
+      <stop offset="50%" stop-color="#06B6D4" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0.06"/>
+    </linearGradient>
+    <filter id="blur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="24" result="b"/>
+      <feComposite in="SourceGraphic" in2="b" operator="over"/>
+    </filter>
+    <symbol id="user" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-3.33 0-6 1.67-6 4v1h12v-1c0-2.33-2.67-4-6-4z" />
+    </symbol>
+    <symbol id="rocket" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M12 2c-.5 0-1 .2-1.4.6L8 5.2c-1.2 1.2-2 3-2.2 4.8-.1 1 .5 2 1.4 2.7L12 17l4.8-4.8c.7-.9 1.3-1.5 2.3-1.6 1.8-.2 3.6-1 4.8-2.2l2.6-2.6C21.8 3 12 2 12 2z" />
+    </symbol>
+  </defs>
+
+  <!-- soft gradient background -->
+  <rect width="1600" height="800" fill="url(#g1)" />
+
+  <!-- faint blobs for depth -->
+  <g fill="#fff" fill-opacity="0.06" filter="url(#blur)">
+    <ellipse cx="300" cy="200" rx="260" ry="120" />
+    <ellipse cx="1200" cy="140" rx="220" ry="100" />
+    <ellipse cx="900" cy="520" rx="360" ry="160" />
+  </g>
+
+  <!-- rising bar chart (left) -->
+  <g transform="translate(120,340)" fill="#fff" fill-opacity="0.12">
+    <rect x="0" y="80" width="36" height="120" rx="6" />
+    <rect x="60" y="40" width="36" height="160" rx="6" />
+    <rect x="120" y="10" width="36" height="190" rx="6" />
+    <rect x="180" y="-20" width="36" height="220" rx="6" />
+    <path d="M0 100 L216 20" stroke="#fff" stroke-opacity="0.14" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <circle cx="216" cy="20" r="8" fill="#fff" fill-opacity="0.18"/>
+  </g>
+
+  <!-- group of small user icons (right) -->
+  <g transform="translate(1180,300) scale(1.6)" fill="#fff" fill-opacity="0.14">
+    <use href="#user" x="-60" y="-10" />
+    <use href="#user" x="0" y="0" transform="translate(40,30) scale(0.9)" />
+    <use href="#user" x="80" y="-20" transform="translate(80,-20) scale(0.85)" />
+  </g>
+
+  <!-- semi-transparent rocket flying up-left to right -->
+  <g transform="translate(520,180) scale(4) rotate(-18)" fill="#fff" fill-opacity="0.18">
+    <use href="#rocket" />
+    <path d="M-12 18 C-6 22 0 28 12 22" stroke="#fff" stroke-opacity="0.08" stroke-width="2" fill="none" stroke-linecap="round" />
+  </g>
+
+  <!-- subtle overlay pattern (diagonal lines) -->
+  <g stroke="#fff" stroke-opacity="0.02" stroke-width="1">
+    <path d="M0 760 L1600 0 M0 740 L1600 -20 M0 720 L1600 -40" />
+  </g>
+
+  <!-- decorative rounded shape bottom-left -->
+  <path d="M0 800 C200 650 420 700 700 620 C1000 540 1400 700 1600 560 L1600 800 Z" fill="#0ea5a18a" fill-opacity="0.04" />
+
+</svg>
