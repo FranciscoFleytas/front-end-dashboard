@@ -49,6 +49,56 @@ const dataModel = ref({
   comments: 0
 })
 
+const API_BASE = 'http://localhost:8000'
+
+type UserSearchResult = {
+  id: number
+  label: string
+  suffix: string
+  link_instagram: string
+  avatar: { src: string }
+}
+
+const profileResult = ref<UserSearchResult | null>(null)
+const profileLoading = ref(false)
+const profileError = ref<string | null>(null)
+
+const normalizedUsername = computed(() => {
+  const u = (dataModel.value.username || '').trim()
+  return u.startsWith('@') ? u.slice(1) : u
+})
+
+const canContinueUserInfo = computed(() => {
+  return !!dataModel.value.email.trim() && !!normalizedUsername.value.trim() && !!profileResult.value && !profileLoading.value
+})
+
+const fetchProfile = async () => {
+  profileError.value = null
+  profileResult.value = null
+
+  const u = normalizedUsername.value.trim()
+  if (!u) return
+
+  profileLoading.value = true
+  try {
+    // Usamos el endpoint que ya funciona (devuelve un solo objeto)
+    const res = await $fetch<UserSearchResult>(`${API_BASE}/api/users/search`, {
+      params: {
+        q: u,
+        email: dataModel.value.email.trim() || undefined
+      }
+    })
+
+    profileResult.value = res
+  } catch (e: any) {
+    profileResult.value = null
+    profileError.value = 'No pudimos validar ese usuario. Verifica que exista y que esté bien escrito.'
+  } finally {
+    profileLoading.value = false
+  }
+}
+
+
 // Slider configuration options
 const sliderOptions = {
   follows: {
@@ -117,14 +167,25 @@ const verfyUserInfo = async () => {
     toast.add({ title: 'Error', description: 'Por favor ingresa tu correo electrónico', color: 'error' })
     return
   }
-  
+
   if (!dataModel.value.username.trim()) {
     toast.add({ title: 'Error', description: 'Por favor ingresa tu nombre de usuario de Instagram', color: 'error' })
     return
   }
 
+  // Validar/preview del perfil antes de avanzar
+  if (!profileResult.value) {
+    await fetchProfile()
+  }
+
+  if (!profileResult.value) {
+    toast.add({ title: 'Error', description: 'No pudimos validar tu usuario de Instagram. Revisa el @ y vuelve a intentar.', color: 'error' })
+    return
+  }
+
   stepper.value?.next()
 }
+
 
 const verifyForm = async () => {
   
@@ -223,7 +284,50 @@ const handleConfirmOrder = async () => {
                       step="10"
                       class="w-full"
                       icon="i-lucide-at-sign"
+                      @blur="fetchProfile"
+                      @keydown.enter.prevent="fetchProfile"
                     />
+
+                  <div class="mt-3">
+                    <div v-if="profileLoading" class="text-sm text-muted">
+                      Buscando perfil…
+                    </div>
+
+                    <div v-else-if="profileError" class="text-sm text-red-500">
+                      {{ profileError }}
+                    </div>
+
+                    <UCard v-else-if="profileResult" class="mt-2">
+                      <div class="flex items-center gap-3">
+                        <img
+                          v-if="profileResult?.avatar?.src"
+                          :src="profileResult.avatar.src"
+                          alt="avatar"
+                          class="h-10 w-10 rounded-full object-cover"
+                        />
+                        <div
+                          v-else
+                          class="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
+                        >
+                          @
+                        </div>
+                        <div class="flex-1">
+                          <div class="font-semibold leading-tight">
+                            {{ profileResult.label }}
+                          </div>
+                          <a
+                            class="text-sm text-primary underline"
+                            :href="profileResult.link_instagram"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {{ profileResult.link_instagram }}
+                          </a>
+                        </div>
+                      </div>
+                    </UCard>
+                  </div>
+  
                   </UFormField>
                 </UFormGroup>
 
