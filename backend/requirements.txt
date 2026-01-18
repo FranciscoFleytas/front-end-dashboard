@@ -6,3 +6,4 @@ pydantic==2.8.2
 pydantic-settings
 httpx
 tenacity
+instagrapi

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { email } from 'zod'
+import { ref, computed, watch, nextTick } from 'vue'
 import type { StepperItem } from '@nuxt/ui'
 import ConfirmModal from '@/components/poner-precio/ConfirmModal.vue'
 
+
 const title = 'Define tu precio'
 const description = 'Establece tu estrategia de precios. Elige el modelo que mejor se adapte a tu negocio.'
+const isSelectingSuggestion = ref(false)
 
 useSeoMeta({
   title,
@@ -40,17 +41,6 @@ const stepperActiveStep = ref(0)
 
 const stepper = useTemplateRef('stepper')
 
-const dataModel = ref({
-  email: '',
-  username: '',
-  follows: 0,
-  likes: 0,
-  views: 0,
-  comments: 0
-})
-
-const API_BASE = 'http://localhost:8000'
-
 type UserSearchResult = {
   id: number
   label: string
@@ -59,9 +49,68 @@ type UserSearchResult = {
   avatar: { src: string }
 }
 
-const profileResult = ref<UserSearchResult | null>(null)
-const profileLoading = ref(false)
-const profileError = ref<string | null>(null)
+type UserPost = {
+  id: string
+  thumbnail: string
+  shortcode: string
+  link_instagram: string
+  caption: string | null
+  taken_at: string | null
+  selected: boolean
+}
+
+type UserPostsResponse = {
+  posts: UserPost[]
+  total: number
+  skip: number
+  limit: number
+}
+
+type SelectedPost = {
+  url: string
+  title: string
+  thumbnail: string
+}
+
+type DataModel = {
+  email: string
+  username: string
+  follows: number
+  likes: number
+  views: number
+  comments: number
+  user: UserSearchResult | null
+  selected_posts: SelectedPost[]
+}
+
+const dataModel = ref<DataModel>({
+  email: '',
+  username: '',
+  follows: 0,
+  likes: 0,
+  views: 0,
+  comments: 0,
+  user: null,
+  selected_posts: []
+})
+
+const API_BASE = 'http://localhost:8000'
+
+const proxyImage = (url?: string | null) => {
+  if (!url) return ''
+  const trimmed = url.trim()
+  const proxyPath = '/api/proxy/image?url='
+  const isAbsolute = /^https?:\/\//i.test(trimmed)
+  if (trimmed.includes(proxyPath)) {
+    return isAbsolute ? trimmed : `${API_BASE}${trimmed}`
+  }
+  return `${API_BASE}${proxyPath}${encodeURIComponent(trimmed)}`
+}
+
+// En este flujo NO hacemos un "fetch" extra para validar el username.
+// La única fuente de verdad del perfil es el item seleccionado del dropdown
+// (/api/users/search/list) que ya viene desde instagrapi.
+const selectionError = ref<string | null>(null)
 
 const normalizedUsername = computed(() => {
   const u = (dataModel.value.username || '').trim()
@@ -69,34 +118,61 @@ const normalizedUsername = computed(() => {
 })
 
 const canContinueUserInfo = computed(() => {
-  return !!dataModel.value.email.trim() && !!normalizedUsername.value.trim() && !!profileResult.value && !profileLoading.value
+  return !!dataModel.value.email.trim() && !!dataModel.value.user
 })
 
-const fetchProfile = async () => {
-  profileError.value = null
-  profileResult.value = null
+const postsLoading = ref(false)
+const postsModel = ref<UserPostsResponse>({
+  posts: [],
+  total: 0,
+  skip: 0,
+  limit: 12
+})
 
-  const u = normalizedUsername.value.trim()
-  if (!u) return
+const selectedPosts = computed(() => postsModel.value.posts.filter((post) => post.selected))
+const canContinuePriceSetting = computed(() => selectedPosts.value.length > 0)
 
-  profileLoading.value = true
+const searchSuggestions = ref<UserSearchResult[]>([])
+const searchLoading = ref(false)
+const showSuggestions = ref(false)
+let searchTimeout: ReturnType<typeof setTimeout> | null = null
+
+const fetchSearchSuggestions = async (query: string): Promise<void> => {
   try {
-    // Usamos el endpoint que ya funciona (devuelve un solo objeto)
-    const res = await $fetch<UserSearchResult>(`${API_BASE}/api/users/search`, {
+    const res = await $fetch<UserSearchResult[]>(`${API_BASE}/api/users/search/list`, {
       params: {
-        q: u,
-        email: dataModel.value.email.trim() || undefined
+        q: query,
+        limit: 8
       }
     })
-
-    profileResult.value = res
+    searchSuggestions.value = res
   } catch (e: any) {
-    profileResult.value = null
-    profileError.value = 'No pudimos validar ese usuario. Verifica que exista y que esté bien escrito.'
+    searchSuggestions.value = []
   } finally {
-    profileLoading.value = false
+    searchLoading.value = false
   }
 }
+
+const selectSuggestion = async (item: UserSearchResult): Promise<void> => {
+  isSelectingSuggestion.value = true
+
+  if (searchTimeout) clearTimeout(searchTimeout)
+  searchLoading.value = false
+
+  dataModel.value.username = item.suffix
+  dataModel.value.user = item
+  selectionError.value = null
+
+  postsModel.value = { posts: [], total: 0, skip: 0, limit: 12 }
+  dataModel.value.selected_posts = []
+
+  showSuggestions.value = false
+  searchSuggestions.value = []
+
+  await nextTick()
+  isSelectingSuggestion.value = false
+}
+
 
 
 // Slider configuration options
@@ -161,38 +237,106 @@ const { $toast } = useNuxtApp()
 
 const toast = useToast()
 
-const verfyUserInfo = async () => {
-  // Validaciones
+const fetchUserPosts = async (): Promise<void> => {
+  if (!dataModel.value.user) {
+    toast.add({ title: 'Error', description: 'Primero valida tu usuario de Instagram', color: 'error' })
+    return
+  }
+
+  postsLoading.value = true
+  try {
+    const selectedMap = new Map(postsModel.value.posts.map((post) => [post.id, post.selected]))
+    const res = await $fetch<UserPostsResponse>(`${API_BASE}/api/users/posts`, {
+      params: {
+        username: normalizedUsername.value.trim(),
+        skip: postsModel.value.skip,
+        limit: postsModel.value.limit
+      }
+    })
+
+    postsModel.value = {
+      ...res,
+      posts: res.posts.map((post) => ({
+        ...post,
+        selected: selectedMap.get(post.id) ?? false
+      }))
+    }
+  } catch (e: any) {
+    toast.add({ title: 'Error', description: 'No se pudieron cargar los posts', color: 'error' })
+  } finally {
+    postsLoading.value = false
+  }
+}
+
+watch(
+  () => dataModel.value.username,
+  (value) => {
+    // Si el usuario edita el input y ya había un "user" seleccionado, lo invalidamos
+    if (isSelectingSuggestion.value) return
+    if (dataModel.value.user && value.trim() !== dataModel.value.user.suffix) {
+      dataModel.value.user = null
+	      selectionError.value = null
+      postsModel.value = { posts: [], total: 0, skip: 0, limit: 12 }
+      dataModel.value.selected_posts = []
+    }
+
+    if (searchTimeout) clearTimeout(searchTimeout)
+
+    const query = value.trim().replace(/^@/, "")
+    if (query.length < 2) {
+      searchSuggestions.value = []
+      showSuggestions.value = false
+      return
+    }
+
+    showSuggestions.value = true
+    searchLoading.value = true
+
+    searchTimeout = setTimeout(() => {
+      void fetchSearchSuggestions(query)
+    }, 400)
+  }
+)
+
+
+const verfyUserInfo = async (): Promise<void> => {
   if (!dataModel.value.email.trim()) {
     toast.add({ title: 'Error', description: 'Por favor ingresa tu correo electrónico', color: 'error' })
     return
   }
 
-  if (!dataModel.value.username.trim()) {
-    toast.add({ title: 'Error', description: 'Por favor ingresa tu nombre de usuario de Instagram', color: 'error' })
-    return
-  }
-
-  // Validar/preview del perfil antes de avanzar
-  if (!profileResult.value) {
-    await fetchProfile()
-  }
-
-  if (!profileResult.value) {
-    toast.add({ title: 'Error', description: 'No pudimos validar tu usuario de Instagram. Revisa el @ y vuelve a intentar.', color: 'error' })
+  // Clave: ahora se valida SOLO por selección del dropdown
+  if (!dataModel.value.user) {
+    toast.add({
+      title: 'Error',
+      description: 'Selecciona un perfil de la lista (dropdown) para continuar.',
+      color: 'error'
+    })
     return
   }
 
   stepper.value?.next()
+  void fetchUserPosts()
 }
 
 
-const verifyForm = async () => {
-  
+
+const verifyForm = async (): Promise<void> => {
+  if (selectedPosts.value.length === 0) {
+    toast.add({ title: 'Error', description: 'Selecciona al menos un post para continuar', color: 'error' })
+    return
+  }
+
   if (totalNumeric.value <= 0) {
     toast.add({ title: 'Error', description: 'Debes seleccionar al menos un servicio', color: 'error' })
     return
   }
+
+  dataModel.value.selected_posts = selectedPosts.value.map((post) => ({
+    url: post.link_instagram || '',
+    title: post.caption || post.link_instagram || 'Post de Instagram',
+    thumbnail: post.thumbnail
+  }))
   
   stepper.value?.next()
   
@@ -284,49 +428,85 @@ const handleConfirmOrder = async () => {
                       step="10"
                       class="w-full"
                       icon="i-lucide-at-sign"
-                      @blur="fetchProfile"
-                      @keydown.enter.prevent="fetchProfile"
                     />
 
-                  <div class="mt-3">
-                    <div v-if="profileLoading" class="text-sm text-muted">
-                      Buscando perfil…
+                  <div v-if="showSuggestions" class="mt-2 rounded-lg border border-muted bg-background p-2 shadow-sm">
+                    <div v-if="searchLoading" class="text-sm text-muted">
+                      Buscando perfiles…
                     </div>
-
-                    <div v-else-if="profileError" class="text-sm text-red-500">
-                      {{ profileError }}
-                    </div>
-
-                    <UCard v-else-if="profileResult" class="mt-2">
-                      <div class="flex items-center gap-3">
-                        <img
-                          v-if="profileResult?.avatar?.src"
-                          :src="profileResult.avatar.src"
+                    <div v-else-if="searchSuggestions.length" class="space-y-1">
+                      <button
+                        v-for="item in searchSuggestions"
+                        :key="item.id"
+                        type="button"
+                        class="flex w-full items-center gap-3 rounded-md p-2 text-left hover:bg-muted"
+                        @mousedown.prevent="selectSuggestion(item)"
+                      >
+	                        <img
+	                          v-if="item.avatar?.src"
+	                          :src="proxyImage(item.avatar.src)"
+                          class="h-8 w-8 rounded-full object-cover"
                           alt="avatar"
-                          class="h-10 w-10 rounded-full object-cover"
                         />
                         <div
                           v-else
-                          class="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
+                          class="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
                         >
                           @
                         </div>
                         <div class="flex-1">
-                          <div class="font-semibold leading-tight">
-                            {{ profileResult.label }}
+                          <div class="text-sm font-semibold leading-tight">
+                            {{ item.label }}
                           </div>
-                          <a
-                            class="text-sm text-primary underline"
-                            :href="profileResult.link_instagram"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {{ profileResult.link_instagram }}
-                          </a>
+                          <div class="text-xs text-muted">
+                            {{ item.suffix }}
+                          </div>
                         </div>
-                      </div>
-                    </UCard>
+                      </button>
+                    </div>
+                    <div v-else class="text-sm text-muted">
+                      No se encontraron resultados.
+                    </div>
                   </div>
+
+				  <div class="mt-3">
+				    <div v-if="selectionError" class="text-sm text-red-500">
+				      {{ selectionError }}
+				    </div>
+
+				    <UCard v-else-if="dataModel.user" class="mt-2">
+				      <div class="flex items-center gap-3">
+				        <img
+				          v-if="dataModel.user?.avatar?.src"
+				          :src="proxyImage(dataModel.user.avatar.src)"
+				          alt="avatar"
+				          class="h-10 w-10 rounded-full object-cover"
+				        />
+				        <div
+				          v-else
+				          class="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
+				        >
+				          @
+				        </div>
+				        <div class="flex-1">
+				          <div class="font-semibold leading-tight">
+				            {{ dataModel.user.label }}
+                    <span class="text-xs text-muted">
+                      ({{ dataModel.user.suffix }})
+                    </span>
+				          </div>
+				          <a
+				            class="text-sm text-primary underline"
+				            :href="dataModel.user.link_instagram"
+				            target="_blank"
+				            rel="noreferrer"
+				          >
+				            {{ dataModel.user.link_instagram }}
+				          </a>
+				        </div>
+				      </div>
+				    </UCard>
+				  </div>
   
                   </UFormField>
                 </UFormGroup>
@@ -357,6 +537,63 @@ const handleConfirmOrder = async () => {
               </template>
 
               <form @submit.prevent="verifyForm" class="space-y-6">
+                <div class="space-y-4">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <h4 class="text-base font-semibold">Ultimos posts</h4>
+                      <p class="text-sm text-muted">Selecciona los posts en los que quieres trabajar</p>
+                    </div>
+                    <UButton
+                      type="button"
+                      label="Recargar"
+                      size="sm"
+                      variant="outline"
+                      :loading="postsLoading"
+                      @click="fetchUserPosts"
+                    />
+                  </div>
+
+                  <div v-if="postsLoading" class="text-sm text-muted">
+                    Cargando posts…
+                  </div>
+
+                  <div v-else-if="postsModel.posts.length" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <UCard v-for="post in postsModel.posts" :key="post.id">
+                      <div class="flex gap-3">
+                        <div class="h-20 w-20 overflow-hidden rounded-lg bg-muted">
+                          <img
+                            v-if="post.thumbnail"
+                            :src="proxyImage(post.thumbnail)"
+                            :alt="post.caption || 'Post de Instagram'"
+                            class="h-full w-full object-cover"
+                          />
+                        </div>
+                        <div class="flex-1">
+                          <div class="text-sm font-semibold line-clamp-2">
+                            {{ post.caption || 'Post de Instagram' }}
+                          </div>
+                          <div class="mt-2 flex items-center gap-2 text-xs text-muted">
+                            <input
+                              v-model="post.selected"
+                              type="checkbox"
+                              class="h-4 w-4"
+                            />
+                            <span>Seleccionar</span>
+                          </div>
+                          <a
+                            v-if="post.link_instagram"
+                            class="mt-2 block text-xs text-primary underline"
+                            :href="post.link_instagram"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Ver post
+                          </a>
+                        </div>
+                      </div>
+                    </UCard>
+                  </div>
+                </div>
 
                 <!-- Follows slider -->
                 <UFormGroup label="Cantidad de follows" hint="Cantidad aproximada de seguidores a agregar" >
@@ -452,6 +689,7 @@ const handleConfirmOrder = async () => {
                     label="Guardar configuración"
                     size="lg"
                     block
+                    :disabled="!canContinuePriceSetting"
                   />
                   <UButton
                     label="Editar usuario"

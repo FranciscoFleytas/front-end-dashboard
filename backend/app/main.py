@@ -6,15 +6,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import connect, init_db
-from .routers import admin, public, webhooks
+from .routers import admin, public, webhooks, instagram, users, user_posts, image_proxy 
 from .settings import settings
-from .routers import admin, public, webhooks, instagram, users
 
 logging.basicConfig(level=settings.LOG_LEVEL.upper())
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
@@ -22,15 +22,14 @@ app.add_middleware(
     allow_headers=settings.allowed_headers_list,
 )
 
-app.include_router(public.router)
-app.include_router(webhooks.router)
-app.include_router(admin.router)
+# Routers (sin duplicados)
 app.include_router(public.router)
 app.include_router(webhooks.router)
 app.include_router(admin.router)
 app.include_router(instagram.router)
 app.include_router(users.router)
-
+app.include_router(user_posts.router)
+app.include_router(image_proxy.router)
 
 @app.on_event("startup")
 def on_startup() -> None:
@@ -41,6 +40,7 @@ def on_startup() -> None:
         conn.close()
     logger.info("Database initialized")
 
+
 @app.get("/health")
-def health():
+def health() -> dict:
     return {"ok": True}

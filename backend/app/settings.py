@@ -40,6 +40,10 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
 
+    IG_USER: str = ""
+    IG_PASS: str = ""
+    IG_SETTINGS_PATH: str = "./backend/ig_settings.json"
+
     model_config = {
         "env_file": os.getenv("ENV_FILE", ".env"),
         "env_file_encoding": "utf-8",
