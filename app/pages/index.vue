@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const title = '¡Hacé que tu perfil explote! 🚀'
+const title = '¡Hacé que tu perfil explote!'
 const description = 'Impulsa el crecimiento de tu Instagram con resultados garantizados. Seguidores e interacciones reales, sin procesos complejos y con entrega inmediata. Obtén la relevancia que tu perfil necesita de forma segura.'
 
 useSeoMeta({

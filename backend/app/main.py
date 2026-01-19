@@ -12,6 +12,11 @@ from .settings import settings
 logging.basicConfig(level=settings.LOG_LEVEL.upper())
 logger = logging.getLogger(__name__)
 
+logging.getLogger("instagrapi").setLevel(logging.WARNING)
+logging.getLogger("public_request").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.INFO)  # pon WARNING si quieres menos aún
+
+
 app = FastAPI()
 
 # CORS

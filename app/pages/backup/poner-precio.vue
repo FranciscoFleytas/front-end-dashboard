@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import type { StepperItem } from '@nuxt/ui'
 import ConfirmModal from '@/components/poner-precio/ConfirmModal.vue'
 
@@ -17,10 +17,10 @@ useSeoMeta({
 // Constants
 const API_BASE = 'http://localhost:8000'
 const MIN_CHARS = 3
-const DEBOUNCE_MS = 300 // Mantengo tu mejora
+const DEBOUNCE_MS = 300 // Reducido de 650ms para mejor UX
 const SEARCH_CACHE_MS = 120_000
 const CACHE_CLEANUP_INTERVAL = 300_000
-const POSTS_PAGE_CACHE_MS = 180_000
+
 const ERROR_MESSAGES = {
   INVALID_EMAIL: 'Por favor ingresa un correo electrónico válido',
   SELECT_USER: 'Selecciona un perfil de la lista (dropdown) para continuar.',
@@ -51,11 +51,11 @@ type UserPost = {
   selected: boolean
 }
 
-// CAMBIO: respuesta de posts por cursor
 type UserPostsResponse = {
   posts: UserPost[]
+  total: number
+  skip: number
   limit: number
-  next_cursor: string | null
 }
 
 type SelectedPost = {
@@ -147,12 +147,11 @@ const sliderOptions = {
 // Search state
 const selectionError = ref<string | null>(null)
 const postsLoading = ref(false)
-
-// CAMBIO: postsModel por cursor
 const postsModel = ref<UserPostsResponse>({
   posts: [],
-  limit: 12,
-  next_cursor: null
+  total: 0,
+  skip: 0,
+  limit: 12
 })
 
 const searchSuggestions = ref<UserSearchResult[]>([])
@@ -162,36 +161,18 @@ let searchTimeout: ReturnType<typeof setTimeout> | null = null
 let searchAbort: AbortController | null = null
 const searchCache = new Map<string, { t: number; data: UserSearchResult[] }>()
 
-// NUEVO: paginación por cursor
-const pageIndex = ref(0)
-const cursorStack = ref<(string | null)[]>([null])
-const canPrevPage = computed(() => pageIndex.value > 0)
-const canNextPage = computed(() => !!postsModel.value.next_cursor)
+// OPTIMIZACIÓN: Caché de posts por usuario
+const postsCache = new Map<string, UserPostsResponse>()
 
-// NUEVO: cache por página (username|limit|cursor)
-const postsPageCache = new Map<string, { t: number; data: UserPostsResponse }>()
-
-const postsCacheKey = (username: string, limit: number, cursor: string | null) =>
-  `${username.toLowerCase()}|${limit}|${cursor || 'FIRST'}`
-
-// SSR-safe interval
-let cacheCleanupInterval: ReturnType<typeof setInterval> | null = null
-
-onMounted(() => {
-  cacheCleanupInterval = setInterval(() => {
-    const now = Date.now()
-
-    // limpia search cache
-    for (const [key, value] of searchCache.entries()) {
-      if (now - value.t > SEARCH_CACHE_MS) searchCache.delete(key)
+// Cache cleanup interval
+const cacheCleanupInterval = setInterval(() => {
+  const now = Date.now()
+  for (const [key, value] of searchCache.entries()) {
+    if (now - value.t > SEARCH_CACHE_MS) {
+      searchCache.delete(key)
     }
-
-    // limpia posts cache por página
-    for (const [key, value] of postsPageCache.entries()) {
-      if (now - value.t > POSTS_PAGE_CACHE_MS) postsPageCache.delete(key)
-    }
-  }, CACHE_CLEANUP_INTERVAL)
-})
+  }
+}, CACHE_CLEANUP_INTERVAL)
 
 // Utility functions
 const proxyImage = (url?: string | null) => {
@@ -303,13 +284,6 @@ const fetchSearchSuggestions = async (query: string): Promise<void> => {
   }
 }
 
-const resetPostsPagination = () => {
-  pageIndex.value = 0
-  cursorStack.value = [null]
-  postsModel.value = { posts: [], limit: 12, next_cursor: null }
-  postsPageCache.clear()
-}
-
 const selectSuggestion = async (item: UserSearchResult): Promise<void> => {
   isSelectingSuggestion.value = true
 
@@ -320,21 +294,20 @@ const selectSuggestion = async (item: UserSearchResult): Promise<void> => {
   dataModel.value.user = item
   selectionError.value = null
 
+  postsModel.value = { posts: [], total: 0, skip: 0, limit: 12 }
   dataModel.value.selected_posts = []
+
   showSuggestions.value = false
   searchSuggestions.value = []
-
-  // resetea paginación al cambiar de usuario
-  resetPostsPagination()
 
   await nextTick()
   isSelectingSuggestion.value = false
 
-  // Prefetch primera página
+  // OPTIMIZACIÓN: Prefetch posts en background
   void fetchUserPosts()
 }
 
-// Posts functions (cursor-based)
+// Posts functions
 const fetchUserPosts = async (): Promise<void> => {
   if (!dataModel.value.user) {
     toast.add({
@@ -346,31 +319,24 @@ const fetchUserPosts = async (): Promise<void> => {
   }
 
   const username = normalizedUsername.value.trim()
-  const cursor = cursorStack.value[pageIndex.value] ?? null
-  const key = postsCacheKey(username, postsModel.value.limit, cursor)
 
-  //cache por página
-  const cached = postsPageCache.get(key)
-  if (cached && Date.now() - cached.t < POSTS_PAGE_CACHE_MS) {
-    // Mantén selección por id actual
-    const selectedMap = new Map(postsModel.value.posts.map((p) => [p.id, p.selected]))
+  // OPTIMIZACIÓN: Verificar caché primero
+  if (postsCache.has(username)) {
+    const cached = postsCache.get(username)!
     postsModel.value = {
-      ...cached.data,
-      posts: cached.data.posts.map((p) => ({ ...p, selected: selectedMap.get(p.id) ?? false }))
+      ...cached,
+      posts: cached.posts.map(p => ({ ...p, selected: false }))
     }
     return
   }
 
   postsLoading.value = true
   try {
-    // Mantener selección por id
-    const selectedMap = new Map(postsModel.value.posts.map((p) => [p.id, p.selected]))
-
     const res = await $fetch<UserPostsResponse>(`${API_BASE}/api/users/posts`, {
       params: {
         username,
-        limit: postsModel.value.limit,
-        cursor: cursor ?? undefined
+        skip: postsModel.value.skip,
+        limit: postsModel.value.limit
       }
     })
 
@@ -378,11 +344,12 @@ const fetchUserPosts = async (): Promise<void> => {
       ...res,
       posts: res.posts.map((post) => ({
         ...post,
-        selected: selectedMap.get(post.id) ?? false
+        selected: false
       }))
     }
 
-    postsPageCache.set(key, { t: Date.now(), data: { ...postsModel.value } })
+    // OPTIMIZACIÓN: Guardar en caché
+    postsCache.set(username, { ...postsModel.value })
   } catch (e: any) {
     const errorMessage = e?.statusCode === 404
       ? ERROR_MESSAGES.USER_NOT_FOUND
@@ -394,33 +361,6 @@ const fetchUserPosts = async (): Promise<void> => {
   } finally {
     postsLoading.value = false
   }
-}
-
-const nextPage = async (): Promise<void> => {
-  if (postsLoading.value) return
-  const next = postsModel.value.next_cursor
-  if (!next) return
-
-  cursorStack.value[pageIndex.value + 1] = next
-  pageIndex.value++
-  await fetchUserPosts()
-}
-
-
-const prevPage = async (): Promise<void> => {
-  if (postsLoading.value) return
-  if (pageIndex.value === 0) return
-
-  pageIndex.value--
-  await fetchUserPosts()
-}
-
-const reloadCurrentPage = async (): Promise<void> => {
-  const username = normalizedUsername.value.trim()
-  const cursor = cursorStack.value[pageIndex.value] ?? null
-  const key = postsCacheKey(username, postsModel.value.limit, cursor)
-  postsPageCache.delete(key)
-  await fetchUserPosts()
 }
 
 // Form validation
@@ -453,9 +393,9 @@ const verfyUserInfo = async (): Promise<void> => {
   }
 
   stepper.value?.next()
-
-  // Prefetch solo si no hay nada cargado aún
-  if (!postsModel.value.posts.length) {
+  
+  // OPTIMIZACIÓN: Solo fetch si no está en caché
+  if (!postsCache.has(normalizedUsername.value.trim())) {
     void fetchUserPosts()
   }
 }
@@ -496,8 +436,11 @@ const handleConfirmOrder = async () => {
   const instance = modal.open()
   const shouldSendOrder = await instance.result
 
-  if (!shouldSendOrder) return
+  if (!shouldSendOrder) {
+    return
+  }
 
+  // Implementar lógica de envío
   console.log({
     email: dataModel.value.email,
     username: dataModel.value.username,
@@ -525,16 +468,15 @@ watch(
     if (dataModel.value.user && value.trim() !== dataModel.value.user.suffix) {
       dataModel.value.user = null
       selectionError.value = null
+      postsModel.value = { posts: [], total: 0, skip: 0, limit: 12 }
       dataModel.value.selected_posts = []
-      resetPostsPagination()
     }
 
     if (searchTimeout) clearTimeout(searchTimeout)
 
     const query = value.trim().replace(/^@/, '')
 
-    // ✅ coherente con MIN_CHARS
-    if (query.length < MIN_CHARS) {
+    if (query.length < 2) {
       if (searchAbort) {
         searchAbort.abort()
         searchAbort = null
@@ -558,7 +500,7 @@ watch(
 onUnmounted(() => {
   if (searchTimeout) clearTimeout(searchTimeout)
   if (searchAbort) searchAbort.abort()
-  if (cacheCleanupInterval) clearInterval(cacheCleanupInterval)
+  clearInterval(cacheCleanupInterval)
 })
 </script>
 
@@ -731,7 +673,7 @@ onUnmounted(() => {
                       size="sm"
                       variant="outline"
                       :loading="postsLoading"
-                      @click="reloadCurrentPage"
+                      @click="fetchUserPosts"
                     />
                   </div>
 
@@ -775,27 +717,6 @@ onUnmounted(() => {
                         </div>
                       </div>
                     </UCard>
-                  </div>
-
-                  <!-- PAGINACIÓN -->
-                  <div v-if="postsModel.posts.length" class="mt-4 flex items-center justify-between gap-3">
-                    <UButton
-                      type="button"
-                      label="Anterior"
-                      size="sm"
-                      variant="outline"
-                      :disabled="!canPrevPage || postsLoading"
-                      @click="prevPage"
-                    />
-                    <div class="text-sm text-muted">Página {{ pageIndex + 1 }}</div>
-                    <UButton
-                      type="button"
-                      label="Siguiente"
-                      size="sm"
-                      variant="outline"
-                      :disabled="!canNextPage || postsLoading"
-                      @click="nextPage"
-                    />
                   </div>
                 </div>
 
@@ -885,7 +806,7 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <!-- CTA Buttons (se mantienen tal cual) -->
+                <!-- CTA Buttons -->
                 <div class="flex flex-col gap-3 pt-4">
                   <UButton
                     type="submit"
@@ -960,7 +881,7 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <!-- CTA Buttons (se mantienen tal cual) -->
+                <!-- CTA Buttons -->
                 <div class="flex flex-col gap-3 pt-4">
                   <UButton
                     label="Confirmar pedido"
